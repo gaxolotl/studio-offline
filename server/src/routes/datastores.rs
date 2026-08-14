@@ -79,89 +79,13 @@ async fn log_request(method: &str, uri: &str, headers: &HashMap<String, String>,
 }
 
 pub fn routes() -> Router<Arc<AppState>> {
-    Router::new()
-        .route(
-            "/v2/persistence/{user_id}/datastores/objects/object",
-            get(handle_object).post(handle_object).delete(handle_object),
-        )
-        .route(
-            "/v2/persistence/{user_id}/datastores/objects/object/",
-            get(handle_object).post(handle_object).delete(handle_object),
-        )
-        .route(
-            "/v2/persistence/{user_id}/datastores/objects/{*rest}",
-            get(handle_object_sub).post(handle_object_sub).delete(handle_object_sub),
-        )
-        .route(
-            "/v2/persistence/{user_id}/datastores/objects/{*rest}/",
-            get(handle_object_sub).post(handle_object_sub).delete(handle_object_sub),
-        )
-        .route(
-            "/v2/persistence/{user_id}/datastores",
-            get(handle_list_datastores),
-        )
-        .route(
-            "/v2/persistence/{user_id}/datastores/",
-            get(handle_list_datastores),
-        )
+    Router::new().route(
+        "/v2/persistence/{user_id}/datastores/{*rest}",
+        get(handle_datastore).post(handle_datastore).delete(handle_datastore),
+    )
 }
 
-async fn handle_object(
-    State(_state): State<Arc<AppState>>,
-    Path(user_id): Path<String>,
-    Query(query): Query<PersistenceQuery>,
-    req: Request,
-) -> Response {
-    let (method, uri, headers, body) = read_body(req).await;
-    log_request(&method, &uri, &headers, &body).await;
-
-    let datastore = query.datastore.unwrap_or_default();
-    let object_key = query.objectKey.unwrap_or_default();
-    let scope = query.scope.unwrap_or_default();
-
-    let dir = datastore_dir(&user_id, &datastore, &scope);
-    let file = dir.join(format!("{}.dat", object_key));
-
-    match method.as_str() {
-        "GET" => {
-            if file.exists() {
-                match tokio::fs::read(&file).await {
-                    Ok(data) => {
-                        let mut res = Response::new(Body::from(data));
-                        res.headers_mut()
-                            .insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
-                        res
-                    }
-                    Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                }
-            } else {
-                StatusCode::NOT_FOUND.into_response()
-            }
-        }
-        "POST" | "PUT" => {
-            if let Some(parent) = file.parent() {
-                let _ = tokio::fs::create_dir_all(parent).await;
-            }
-            match tokio::fs::write(&file, &body).await {
-                Ok(_) => {
-                    tracing::info!("SAVED datastore={} scope={} key={} len={}", datastore, scope, object_key, body.len());
-                    let mut res = Response::new(Body::empty());
-                    res.headers_mut()
-                        .insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
-                    res
-                }
-                Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            }
-        }
-        "DELETE" => {
-            let _ = tokio::fs::remove_file(&file).await;
-            Response::new(Body::empty())
-        }
-        _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
-    }
-}
-
-async fn handle_object_sub(
+async fn handle_datastore(
     State(_state): State<Arc<AppState>>,
     Path((user_id, rest)): Path<(String, String)>,
     Query(query): Query<PersistenceQuery>,
@@ -174,6 +98,12 @@ async fn handle_object_sub(
     let object_key = query.objectKey.unwrap_or_default();
     let scope = query.scope.unwrap_or_default();
     let dir = datastore_dir(&user_id, &datastore, &scope);
+
+    // listing keys: /objects
+    if rest.trim_end_matches('/') == "objects" {
+        return handle_list_keys(&user_id, &datastore, &scope, &query).await;
+    }
+
     let file = dir.join(format!("{}.dat", object_key));
 
     // increment
@@ -217,9 +147,9 @@ async fn handle_object_sub(
         return res;
     }
 
-    // versions -> list versions; minimal: return stored value as a version
+    // versions -> minimal single version response
     if rest.contains("versions") {
-        let body = if file.exists() {
+        let value_body = if file.exists() {
             tokio::fs::read(&file).await.unwrap_or_default()
         } else {
             Vec::new()
@@ -227,7 +157,7 @@ async fn handle_object_sub(
         let json = format!(
             "{{\"key\":\"{}\",\"value\":\"{}\",\"version\":\"0\",\"isDeleted\":false}}",
             object_key,
-            String::from_utf8_lossy(&body).replace('"', "\\\"")
+            String::from_utf8_lossy(&value_body).replace('"', "\\\"")
         );
         let mut res = Response::new(Body::from(json));
         res.headers_mut()
@@ -235,39 +165,73 @@ async fn handle_object_sub(
         return res;
     }
 
-    StatusCode::NOT_FOUND.into_response()
+    // objects/object -> get/set/delete single object
+    match method.as_str() {
+        "GET" => {
+            if file.exists() {
+                match tokio::fs::read(&file).await {
+                    Ok(data) => {
+                        let mut res = Response::new(Body::from(data));
+                        res.headers_mut()
+                            .insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
+                        res
+                    }
+                    Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                }
+            } else {
+                StatusCode::NOT_FOUND.into_response()
+            }
+        }
+        "POST" | "PUT" => {
+            if let Some(parent) = file.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+            match tokio::fs::write(&file, &body).await {
+                Ok(_) => {
+                    tracing::info!("SAVED datastore={} scope={} key={} len={}", datastore, scope, object_key, body.len());
+                    let mut res = Response::new(Body::empty());
+                    res.headers_mut()
+                        .insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
+                    res
+                }
+                Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+        }
+        "DELETE" => {
+            let _ = tokio::fs::remove_file(&file).await;
+            Response::new(Body::empty())
+        }
+        _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
+    }
 }
 
-async fn handle_list_datastores(
-    State(_state): State<Arc<AppState>>,
-    Path(user_id): Path<String>,
-    Query(query): Query<PersistenceQuery>,
-    req: Request,
+async fn handle_list_keys(
+    user_id: &str,
+    datastore: &str,
+    scope: &str,
+    query: &PersistenceQuery,
 ) -> Response {
-    let (_method, uri_str, headers, _body) = read_body(req).await;
-    log_request("GET", &uri_str, &headers, &[]).await;
-
-    let prefix = query.prefix.unwrap_or_default();
-    let base = std::path::PathBuf::from("static/datastores").join(&user_id);
-
-    let mut names: Vec<String> = Vec::new();
-    if let Ok(mut entries) = tokio::fs::read_dir(&base).await {
+    let dir = datastore_dir(user_id, datastore, scope);
+    let mut keys: Vec<String> = Vec::new();
+    if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
         while let Ok(Some(entry)) = entries.next_entry().await {
-            if entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with(&prefix) {
-                    names.push(name);
-                }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(stripped) = name.strip_suffix(".dat") {
+                keys.push(stripped.to_string());
             }
         }
     }
-    names.sort();
+    keys.sort();
+
+    let prefix = query.prefix.clone().unwrap_or_default();
+    if !prefix.is_empty() {
+        keys.retain(|k| k.starts_with(&prefix));
+    }
 
     let json = format!(
-        "{{\"data\":[{}]}}",
-        names
-            .iter()
-            .map(|n| format!("\"{}\"", n))
+        "{{\"data\":[{}],\"nextPageCursor\":null}}",
+        keys.iter()
+            .map(|k| format!("\"{}\"", k))
             .collect::<Vec<_>>()
             .join(",")
     );
