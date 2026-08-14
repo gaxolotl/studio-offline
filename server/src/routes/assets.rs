@@ -75,6 +75,73 @@ pub fn routes() -> Router<Arc<AppState>> {
             "/assets/user-auth/v1/assets/{id}/",
             get(handle_user_auth_asset),
         )
+        .route(
+            "/assets/user-auth/v1/assets/{id}/versions",
+            get(handle_user_auth_asset_versions),
+        )
+        .route(
+            "/assets/user-auth/v1/assets/{id}/versions/",
+            get(handle_user_auth_asset_versions),
+        )
+        .route(
+            "/Data/Upload.ashx",
+            get(handle_data_upload_ashx),
+        )
+        .route(
+            "/Data/Upload.ashx/",
+            get(handle_data_upload_ashx),
+        )
+}
+
+async fn handle_data_upload_ashx(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<HashMap<String, String>>,
+    req: Request,
+) -> Response {
+    if let Some(assetid) = query.get("assetid").or_else(|| query.get("assetId")) {
+        serve_asset_logic(state, assetid.clone(), None, req).await
+    } else {
+        StatusCode::BAD_REQUEST.into_response()
+    }
+}
+
+#[derive(Serialize)]
+#[allow(non_snake_case)]
+struct AssetVersionEntry {
+    id: i64,
+    assetId: i64,
+    assetTypeId: i64,
+    versionNumber: i64,
+    path: String,
+    created: String,
+}
+
+#[derive(Serialize)]
+#[allow(non_snake_case)]
+struct ListAssetVersionsResponse {
+    assetVersions: Vec<AssetVersionEntry>,
+    nextPageToken: Option<String>,
+}
+
+async fn handle_user_auth_asset_versions(Path(id): Path<String>) -> Response {
+    let asset_id = id.parse::<i64>().unwrap_or(0);
+    let path = format!(
+        "http://127.0.0.1/assets/user-auth/v1/assets/{asset_id}"
+    );
+    let created = "2023-01-01T00:00:00.000Z".to_string();
+
+    Json(ListAssetVersionsResponse {
+        assetVersions: vec![AssetVersionEntry {
+            id: asset_id,
+            assetId: asset_id,
+            assetTypeId: 10,
+            versionNumber: 1,
+            path,
+            created,
+        }],
+        nextPageToken: None,
+    })
+    .into_response()
 }
 
 async fn handle_user_auth_asset(
