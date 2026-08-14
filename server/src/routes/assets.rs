@@ -67,6 +67,29 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/ddl/{id}", get(handle_asset_by_path))
         .route("/v1/assets/batch", post(handle_assets_batch))
         .route("/v1/assets/batch/", post(handle_assets_batch))
+        .route(
+            "/assets/user-auth/v1/assets/{id}",
+            get(handle_user_auth_asset),
+        )
+        .route(
+            "/assets/user-auth/v1/assets/{id}/",
+            get(handle_user_auth_asset),
+        )
+}
+
+async fn handle_user_auth_asset(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    req: Request,
+) -> Response {
+    if state.mode == "Reflection Mode" {
+        return Redirect::temporary(&format!(
+            "https://assetdelivery.roblox.com/v1/asset/?id={id}&permissionContext=ignoreUniverse&xcachesplit=0"
+        ))
+        .into_response();
+    }
+
+    serve_asset_logic(state, id, None, req).await
 }
 
 async fn handle_assets_batch(
