@@ -10,7 +10,7 @@ use axum::{
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::io::AsyncReadExt;
+use futures_util::StreamExt;
 
 #[derive(Deserialize)]
 struct PersistenceQuery {
@@ -45,9 +45,11 @@ async fn read_body(req: Request) -> (String, String, HashMap<String, String>, Ve
     }
     let mut body = Vec::new();
     let mut stream = req.into_body().into_data_stream();
-    let mut buf = [0u8; 8192];
-    while let Ok(Some(n)) = stream.read(&mut buf).await {
-        body.extend_from_slice(&buf[..n]);
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Ok(data) => body.extend_from_slice(&data),
+            Err(_) => break,
+        }
     }
     (method, uri, map, body)
 }
