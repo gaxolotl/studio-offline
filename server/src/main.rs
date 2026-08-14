@@ -6,9 +6,11 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod app_state;
 mod asset_types;
+mod request_logger;
 mod routes;
 
 use app_state::AppState;
+use request_logger::RequestLoggerLayer;
 use std::path::Path;
 
 #[tokio::main]
@@ -63,6 +65,7 @@ async fn main() {
         .merge(routes::static_handlers::routes())
         .merge(routes::telemetry::routes())
         .merge(routes::universal_app_config::routes())
+        .layer(RequestLoggerLayer)
         .with_state(app_state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 80));
