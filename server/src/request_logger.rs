@@ -1,8 +1,4 @@
-use axum::{
-    body::{to_bytes, Body},
-    extract::Request,
-    http::Response,
-};
+use axum::{body::Body, extract::Request, http::Response};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -44,26 +40,32 @@ where
             let method = req.method().clone();
             let uri = req.uri().clone();
             let headers = req.headers().clone();
-            let (parts, body) = req.into_parts();
 
-            let bytes = match to_bytes(body, 8 * 1024 * 1024).await {
-                Ok(b) => b,
-                Err(e) => {
-                    tracing::error!("failed to read request body: {e}");
-                    return inner.call(Request::from_parts(parts, Body::empty())).await;
-                }
-            };
+            let host = headers
+                .get("host")
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+            let content_type = headers
+                .get("content-type")
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+            let content_length = headers
+                .get("content-length")
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or("")
+                .to_string();
 
-            let body_text = String::from_utf8_lossy(&bytes);
             tracing::info!(
-                ">>> {} {} body_len={} body={}",
+                ">>> {} {} host={} content-type={} content-length={}",
                 method,
                 uri,
-                bytes.len(),
-                truncate(&body_text, 4000)
+                host,
+                content_type,
+                content_length
             );
 
-            let req = Request::from_parts(parts, Body::from(bytes));
             let start = std::time::Instant::now();
             let res = inner.call(req).await;
             if let Ok(r) = &res {
@@ -77,16 +79,5 @@ where
             }
             res
         })
-    }
-}
-
-fn truncate(s: &str, max: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max {
-        s.to_string()
-    } else {
-        let mut out: String = chars[..max].iter().collect();
-        out.push_str("... [truncated]");
-        out
     }
 }
