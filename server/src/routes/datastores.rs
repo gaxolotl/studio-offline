@@ -2,7 +2,7 @@ use crate::app_state::AppState;
 use axum::{
     body::Body,
     extract::{Path, Query, Request, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Router,
@@ -44,11 +44,10 @@ async fn read_body(req: Request) -> (String, String, HashMap<String, String>, Ve
         }
     }
     let mut body = Vec::new();
-    if let Ok(mut stream) = req.into_body().into_data_stream() {
-        let mut buf = [0u8; 8192];
-        while let Ok(Some(n)) = stream.read(&mut buf).await {
-            body.extend_from_slice(&buf[..n]);
-        }
+    let mut stream = req.into_body().into_data_stream();
+    let mut buf = [0u8; 8192];
+    while let Ok(Some(n)) = stream.read(&mut buf).await {
+        body.extend_from_slice(&buf[..n]);
     }
     (method, uri, map, body)
 }
@@ -243,8 +242,8 @@ async fn handle_list_datastores(
     Query(query): Query<PersistenceQuery>,
     req: Request,
 ) -> Response {
-    let (_method, _uri, headers, _body) = read_body(req).await;
-    log_request("GET", &_uri, &headers, &[]).await;
+    let (_method, uri_str, headers, _body) = read_body(req).await;
+    log_request("GET", &uri_str, &headers, &[]).await;
 
     let prefix = query.prefix.unwrap_or_default();
     let base = std::path::PathBuf::from("static/datastores").join(&user_id);
