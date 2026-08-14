@@ -5,7 +5,6 @@ use axum::{
 };
 use serde_json::json;
 use tower_http::services::ServeFile;
-
 use crate::app_state::AppState;
 use std::sync::Arc;
 
@@ -66,6 +65,22 @@ pub fn routes() -> Router<Arc<AppState>> {
             "/v2/assets/{id}/details",
             ServeFile::new("static/user/Economy/details.json"),
         )
+        .route_service("/userhub", ServeFile::new("static/userhub/index.html"))
+        .route_service("/userhub/", ServeFile::new("static/userhub/index.html"))
+        .route("/v1/user/experiences", get(user_experiences))
+}
+
+async fn user_experiences() -> impl IntoResponse {
+    Json(json!({
+        "data": [
+            {
+                "name": "Baseplate",
+                "placeId": 1818,
+                "universeId": 1,
+                "thumbnailUrl": "http://localhost/renders/places/default.png"
+            }
+        ]
+    }))
 }
 
 async fn logout() -> impl IntoResponse {
