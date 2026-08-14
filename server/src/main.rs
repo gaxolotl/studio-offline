@@ -63,6 +63,7 @@ async fn main() {
         .nest("/assets", routes::upload::routes())
         .merge(routes::assets::routes())
         .merge(routes::static_handlers::routes())
+        .merge(routes::datastores::routes())
         .merge(routes::telemetry::routes())
         .merge(routes::universal_app_config::routes())
         .layer(RequestLoggerLayer)
