@@ -1,7 +1,11 @@
-import struct, sys
+import os, struct, sys
 from capstone import *
 
-EXE = r"C:\Users\Georgi\AppData\Local\Temp\opencode\so734\RobloxStudioBeta.exe"
+# Path to RobloxStudioBeta.exe. Override with env var STUDIO_EXE (use on a new PC).
+EXE = os.environ.get(
+    "STUDIO_EXE",
+    r"C:\Users\Georgi\AppData\Local\Temp\opencode\so734\RobloxStudioBeta.exe",
+)
 data = open(EXE, "rb").read()
 
 # Parse PE header

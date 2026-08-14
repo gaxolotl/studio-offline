@@ -18,6 +18,18 @@ Failure: `Open Place failure : DataModelLoadingFailure:Error fetching latest pla
 - This session's branch: **`re-latest-place-version`** (all this analysis is committed here).
 - Server binary listens on **127.0.0.1:80**; Studio is launched with `--offline` from `C:\Users\Georgi\Desktop\Roblox-Studio-v734\`.
 
+### Working on a NEW PC (important)
+- Clone/fetch this branch: `git fetch mine && git checkout re-latest-place-version`
+  (or clone https://github.com/gaxolotl/studio-offline.git and checkout the branch).
+- The scripts `notes/disasm.py` and `notes/xrefs.py` need **Python + `capstone`**
+  (`pip install capstone`) and the analyzed exe.
+- The exe is NOT in the repo (too big). Copy it from the old PC:
+  `C:\Users\Georgi\AppData\Local\Temp\opencode\so734\RobloxStudioBeta.exe`
+  (unmodified, v734) to the new PC, then set the env var when running the scripts:
+  `$env:STUDIO_EXE="C:\path\to\RobloxStudioBeta.exe"`.
+  If the v734 exe is unavailable, rebuild analysis against whatever version is in
+  `C:\Users\Georgi\Desktop\Roblox-Studio-v734\RobloxStudioBeta.exe` and recompute addresses.
+
 ## The puzzle / key correction
 
 The "latest place version" fetch makes **ZERO HTTP requests** in every run we examined
