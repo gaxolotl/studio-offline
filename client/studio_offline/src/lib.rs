@@ -80,6 +80,31 @@ extern "system" fn DllMain(_hmod: HMODULE, reason: u32, _reserved: *mut std::ffi
                 println!("HttpRequest_notTrusted: 0x{httprequest_addr:x}");
             }
 
+            // The fetcher (0x14234E590) throws "Error fetching latest place version"
+            // at 0x14234EC00 before any HTTP when its 8th stack arg != 0 (caller 2,
+            // content types 2/4/10) and no version could be resolved. NOP the
+            // `jne 0x14234ec00` at 0x14234E994 so it falls through to build the
+            // /v1/asset/?id=%lld URL and call the dispatcher (real HTTP).
+            println!("Patching latest-place-version throw...");
+            if let Some(fetcher_addr) = scanner::aob_scan(patterns::FETCHER_JNE_THROW) {
+                println!("Found fetcher jne at 0x{fetcher_addr:x}");
+                let jne_addr = fetcher_addr + 7;
+                let mut old_protect = PAGE_PROTECTION_FLAGS(0);
+                let _ = VirtualProtect(
+                    jne_addr as *const _,
+                    6,
+                    PAGE_EXECUTE_READWRITE,
+                    &mut old_protect,
+                );
+                for i in 0..6 {
+                    *(jne_addr as *mut u8).add(i) = 0x90;
+                }
+                let _ = VirtualProtect(jne_addr as *const _, 6, old_protect, &mut old_protect);
+                println!("NOPed fetcher jne at 0x{jne_addr:x}");
+            } else {
+                println!("Failed to find fetcher jne pattern");
+            }
+
             println!("Redirecting latest-place-version URL...");
             if let Some((base, size)) = scanner::get_module_info("RobloxStudioBeta.exe") {
                 let old_url = "https://data.%1/Data/Upload.ashx?assetid=%2";
