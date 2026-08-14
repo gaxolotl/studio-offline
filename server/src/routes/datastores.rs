@@ -4,7 +4,7 @@ use axum::{
     extract::{Path, Query, Request, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::get,
     Router,
 };
 use serde::Deserialize;
@@ -94,9 +94,9 @@ async fn handle_datastore(
     let (method, uri, headers, body) = read_body(req).await;
     log_request(&method, &uri, &headers, &body).await;
 
-    let datastore = query.datastore.unwrap_or_default();
-    let object_key = query.objectKey.unwrap_or_default();
-    let scope = query.scope.unwrap_or_default();
+    let datastore = query.datastore.clone().unwrap_or_default();
+    let object_key = query.objectKey.clone().unwrap_or_default();
+    let scope = query.scope.clone().unwrap_or_default();
     let dir = datastore_dir(&user_id, &datastore, &scope);
 
     // listing keys: /objects
