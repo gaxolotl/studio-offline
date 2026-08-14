@@ -80,6 +80,34 @@ extern "system" fn DllMain(_hmod: HMODULE, reason: u32, _reserved: *mut std::ffi
                 println!("HttpRequest_notTrusted: 0x{httprequest_addr:x}");
             }
 
+            println!("Redirecting latest-place-version URL...");
+            if let Some((base, size)) = scanner::get_module_info("RobloxStudioBeta.exe") {
+                let old_url = "https://data.%1/Data/Upload.ashx?assetid=%2";
+                if let Some(url_addr) = scanner::scan_string(base, size, old_url) {
+                    println!("Found latest-place-version URL at 0x{url_addr:x}");
+                    let replacement = "http://localhost/Data/Upload.ashx?a=%1&b=%2";
+                    assert_eq!(old_url.len(), replacement.len());
+                    let ptr = url_addr as *mut u8;
+                    let mut old_protect = PAGE_PROTECTION_FLAGS(0);
+                    let _ = VirtualProtect(
+                        ptr as *const _,
+                        replacement.len(),
+                        PAGE_EXECUTE_READWRITE,
+                        &mut old_protect,
+                    );
+                    std::ptr::copy_nonoverlapping(
+                        replacement.as_ptr(),
+                        ptr,
+                        replacement.len(),
+                    );
+                    let _ =
+                        VirtualProtect(ptr as *const _, replacement.len(), old_protect, &mut old_protect);
+                    println!("Patched latest-place-version URL -> {replacement}");
+                } else {
+                    println!("Failed to find latest-place-version URL");
+                }
+            }
+
             // i don't know why the security cookie check is failing so let's just patch it
             println!("Applying Security Cookie Patch...");
             if let Some((base, size)) = scanner::get_module_info("RobloxStudioBeta.exe") {

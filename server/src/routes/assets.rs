@@ -94,12 +94,20 @@ pub fn routes() -> Router<Arc<AppState>> {
 }
 
 async fn handle_data_upload_ashx(
-    State(state): State<Arc<AppState>>,
     Query(query): Query<HashMap<String, String>>,
-    req: Request,
 ) -> Response {
-    if let Some(assetid) = query.get("assetid").or_else(|| query.get("assetId")) {
-        serve_asset_logic(state, assetid.clone(), None, req).await
+    let asset_id = ["assetid", "assetId", "a", "b"]
+        .iter()
+        .find_map(|key| query.get(*key))
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0);
+
+    if asset_id > 0 {
+        (
+            [(axum::http::header::CONTENT_TYPE, "text/plain")],
+            "1",
+        )
+            .into_response()
     } else {
         StatusCode::BAD_REQUEST.into_response()
     }
