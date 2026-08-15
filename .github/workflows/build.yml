@@ -13,6 +13,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Build
         run: cargo build --release
+      - name: Package server zip
+        run: |
+          New-Item -ItemType Directory -Force -Path "package"
+          Copy-Item "target/release/studio_offline_server.exe" "package/"
+          Copy-Item -Recurse "static" "package/static"
+          Compress-Archive -Path "package/*" -DestinationPath "studio-offline-server.zip"
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -22,4 +28,5 @@ jobs:
             target/release/webview_who.dll
             target/release/studio_offline_server.exe
             server/*.exe
+            studio-offline-server.zip
           if-no-files-found: error
