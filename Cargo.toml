@@ -3,5 +3,6 @@ resolver = "2"
 members = [
     "client/studio_offline",
     "client/webview_who",
+    "client/offsets_scanner",
     "server"
 ]

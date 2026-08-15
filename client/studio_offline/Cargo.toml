@@ -10,3 +10,5 @@ crate-type = ["cdylib"]
 windows = { version = "0.52", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_SystemServices", "Win32_System_Console", "Win32_System_ProcessStatus", "Win32_System_Memory", "Win32_System_Threading"] }
 minhook-sys = "0.1.0"
 iced-x86 = "1.21.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

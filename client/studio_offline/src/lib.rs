@@ -15,6 +15,7 @@ extern "C" {
 }
 
 mod hooks;
+mod offsets;
 mod patterns;
 mod scanner;
 
@@ -50,6 +51,51 @@ extern "system" fn DllMain(_hmod: HMODULE, reason: u32, _reserved: *mut std::ffi
 
             MH_Initialize();
 
+            // Primary path: apply patches from offsets.json if present.
+            if let Some(offsets_file) = offsets::load() {
+                if let Some((base, _size)) = scanner::get_module_info("RobloxStudioBeta.exe") {
+                    offsets::apply(&offsets_file, base, |p| {
+                        match p.name.as_str() {
+                            "URL_ONCOMPONENT" => {
+                                let addr = base + p.rva;
+                                MH_CreateHook(
+                                    addr as _,
+                                    hooks::hook_test as _,
+                                    &raw mut hooks::ORIGINAL as *mut _ as *mut _,
+                                );
+                                MH_EnableHook(addr as _);
+                                println!("FromComponents: 0x{addr:x}");
+                            }
+                            "TRUSTCHECK" => {
+                                let addr = base + p.rva;
+                                MH_CreateHook(
+                                    addr as _,
+                                    hooks::trustcheck_hook as _,
+                                    &raw mut hooks::OG_TC as *mut _ as *mut _,
+                                );
+                                MH_EnableHook(addr as _);
+                                println!("TrustCheck: 0x{addr:x}");
+                            }
+                            "HTTP_REQUEST_URL" => {
+                                let addr = base + p.rva;
+                                MH_CreateHook(
+                                    addr as _,
+                                    hooks::nottrusted_hook as _,
+                                    &raw mut hooks::ORIGINAL_HTTP_NT as *mut _ as *mut _,
+                                );
+                                MH_EnableHook(addr as _);
+                                println!("HttpRequest_notTrusted: 0x{addr:x}");
+                            }
+                            _ => {
+                                println!("Unknown hook pattern: {}", p.name);
+                            }
+                        }
+                    });
+                    return TRUE;
+                }
+            }
+
+            println!("No offsets.json found; falling back to AOB scanning.");
             if let Some(addr) = scanner::aob_scan(patterns::URL_ONCOMPONENT) {
                 MH_CreateHook(
                     addr as _,

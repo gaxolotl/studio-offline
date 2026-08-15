@@ -19,6 +19,8 @@ jobs:
           Copy-Item "target/release/studio_offline_server.exe" "package/"
           Copy-Item -Recurse "static" "package/static"
           Compress-Archive -Path "package/*" -DestinationPath "studio-offline-server.zip"
+      - name: Build offsets scanner (Windows)
+        run: cargo build --release -p offsets_scanner
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -27,6 +29,7 @@ jobs:
             target/release/studio_offline.dll
             target/release/webview_who.dll
             target/release/studio_offline_server.exe
+            target/release/offsets_scanner.exe
             server/*.exe
             studio-offline-server.zip
           if-no-files-found: error
