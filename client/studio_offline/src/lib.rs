@@ -83,8 +83,9 @@ extern "system" fn DllMain(_hmod: HMODULE, reason: u32, _reserved: *mut std::ffi
             // AsyncHttpQueue trust check: the hooked TrustCheck (above) is a
             // different function; this one builds `{}: Trust check failed` for
             // non-whitelisted URLs like http://localhost/... Patch the
-            // `test al,al` at +17 to `mov al,1` so the `jne` success path is
-            // always taken.
+            // `test al,al` at +17 to `or al,1` (0C 01) so the `jne` success
+            // path is always taken (al becomes non-zero AND ZF is cleared,
+            // unlike `mov al,1` which leaves stale flags).
             println!("Patching AsyncHttpQueue trust check...");
             if let Some(async_trust_addr) = scanner::aob_scan(patterns::ASYNC_TRUST_CHECK) {
                 println!("Found AsyncHttpQueue trust check at 0x{async_trust_addr:x}");
@@ -96,10 +97,10 @@ extern "system" fn DllMain(_hmod: HMODULE, reason: u32, _reserved: *mut std::ffi
                     PAGE_EXECUTE_READWRITE,
                     &mut old_protect,
                 );
-                *(test_addr as *mut u8) = 0xB0;
+                *(test_addr as *mut u8) = 0x0C;
                 *(test_addr as *mut u8).add(1) = 0x01;
                 let _ = VirtualProtect(test_addr as *const _, 2, old_protect, &mut old_protect);
-                println!("Patched test al,al -> mov al,1 at 0x{test_addr:x}");
+                println!("Patched test al,al -> or al,1 at 0x{test_addr:x}");
             } else {
                 println!("Failed to find AsyncHttpQueue trust check pattern");
             }
