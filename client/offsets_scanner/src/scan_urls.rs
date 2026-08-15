@@ -96,19 +96,8 @@ pub fn localhost_replacement(url: &str) -> Option<(String, bool, String)> {
 pub fn scan_ascii_urls(image: &[u8]) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     let markers = [b"http://".as_slice(), b"https://".as_slice()];
-    for (i, _) in image.iter().enumerate() {
-        if i + 8 > image.len() {
-            break;
-        }
-        // Boundary check: the byte before the marker must not be a printable
-        // ASCII char. This prevents matching "http://" inside a larger string
-        // or inside XML/XMP attribute values like xmlns:xmp="http://ns.adobe...".
-        if i > 0 {
-            let prev = image[i - 1];
-            if prev >= 0x21 && prev <= 0x7e {
-                continue;
-            }
-        }
+    let mut i = 0usize;
+    while i + 8 <= image.len() {
         let mut matched = None;
         for (_, m) in markers.iter().enumerate() {
             if image[i..].starts_with(m) {
@@ -116,7 +105,10 @@ pub fn scan_ascii_urls(image: &[u8]) -> Vec<(usize, String)> {
                 break;
             }
         }
-        let Some(marker_len) = matched else { continue };
+        let Some(marker_len) = matched else {
+            i += 1;
+            continue;
+        };
         // Expand only while the bytes could belong to a real URL string.
         // Stop at NUL, whitespace, quotes, angle brackets, control, non-ASCII
         // (all of which appear inside XML/XMP/metadata blobs, not URLs).
@@ -124,12 +116,25 @@ pub fn scan_ascii_urls(image: &[u8]) -> Vec<(usize, String)> {
         while end < image.len() && is_url_char(image[end]) {
             end += 1;
         }
+        // Boundary check: accept the match if it starts at a string boundary
+        // (byte before the marker is non-printable) OR the captured URL is a
+        // complete NUL-terminated string. The second case catches standalone
+        // URL constants that happen to be preceded by adjacent data (e.g. the
+        // byte before "https://devforum..." being part of a neighboring
+        // structure), which the old all-or-nothing check skipped.
+        let prev_ok = i == 0 || !(0x21..=0x7e).contains(&image[i - 1]);
+        let nxt_ok = end < image.len() && image[end] == 0;
+        if !prev_ok && !nxt_ok {
+            i = end;
+            continue;
+        }
         let s = String::from_utf8_lossy(&image[i..end]).to_string();
         if s.chars().count() >= 8 && end - i <= MAX_URL_BYTES {
             out.push((i, s));
         }
-        // skip past this string to avoid duplicate matches inside it
-        // handled by the outer loop naturally
+        // Advance past this match so we never re-match inside it (e.g. the
+        // tail URL of a concatenated blob).
+        i = end;
     }
     out
 }
@@ -159,15 +164,6 @@ pub fn scan_utf16_urls(image: &[u8]) -> Vec<(usize, String)> {
             i += 2;
             continue;
         };
-        // Boundary check: the UTF-16 unit before the marker must not be
-        // printable ASCII (rejects matches inside XML/XMP blobs).
-        if i >= 2 {
-            let prev = u16::from_le_bytes([image[i - 2], image[i - 1]]);
-            if prev >= 0x21 && prev <= 0x7e {
-                i = end_after(i, marker_len);
-                continue;
-            }
-        }
         // Expand utf16 units until a null unit, non-printable unit, or a
         // char that only appears inside metadata blobs (whitespace, quotes,
         // angle brackets).
@@ -187,6 +183,21 @@ pub fn scan_utf16_urls(image: &[u8]) -> Vec<(usize, String)> {
             }
             end += 2;
         }
+        // Boundary check (same union rule as ASCII): accept the match if it
+        // starts at a string boundary (unit before the marker is non-printable)
+        // OR the captured URL is a complete NUL-terminated UTF-16 string.
+        let prev_ok = i < 2 || {
+            let prev = u16::from_le_bytes([image[i - 2], image[i - 1]]);
+            !(0x21..=0x7e).contains(&prev)
+        };
+        let nxt_ok = end + 1 < image.len() && {
+            let nxt = u16::from_le_bytes([image[end], image[end + 1]]);
+            nxt == 0
+        };
+        if !prev_ok && !nxt_ok {
+            i = end;
+            continue;
+        }
         let mut units = Vec::new();
         let mut j = i;
         while j + 1 <= end {
@@ -200,11 +211,6 @@ pub fn scan_utf16_urls(image: &[u8]) -> Vec<(usize, String)> {
         i = end;
     }
     out
-}
-
-fn end_after(start: usize, marker_len: usize) -> usize {
-    // Fast-forward past a UTF-16 marker to avoid re-matching inside it.
-    start + marker_len
 }
 
 pub fn find_urls(image: &PeImage) -> Vec<UrlEntry> {
@@ -430,6 +436,53 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].original, "https://www.roblox.com/asset");
         assert_eq!(found[0].replacement, "http://localhost/asset");
+    }
+
+    #[test]
+    fn finds_url_preceded_by_printable_data() {
+        // A standalone NUL-terminated URL whose preceding byte is printable
+        // (adjacent structure data) must still be found. This is the case the
+        // old strict boundary check missed (e.g. devforum.roblox.com/...).
+        let mut buf = vec![0u8; 512];
+        let url = b"https://devforum.roblox.com/c/platform-feedback/studio-bugs";
+        buf[32..32 + url.len()].copy_from_slice(url);
+        buf[31] = b'X';
+        let img = fake_image(buf);
+        let found = find_urls(&img);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].rva, 32);
+        assert_eq!(found[0].host, "devforum.roblox.com");
+        assert!(!found[0].skipped);
+    }
+
+    #[test]
+    fn skips_embedded_cert_url() {
+        // A CRL URL embedded in X.509 certificate data (preceded and followed
+        // by arbitrary DER bytes, not NUL-terminated) must not be captured.
+        let mut buf = vec![0u8; 512];
+        let url = b"http://crl.comodoca.com/COMODOCertificationAuthority.crl";
+        buf[40..40 + url.len()].copy_from_slice(url);
+        buf[39] = 0x30; // DER SEQUENCE tag, not NUL
+        buf[40 + url.len()] = 0x0d; // not NUL
+        let img = fake_image(buf);
+        let found = find_urls(&img);
+        assert!(
+            found.iter().all(|e| e.skipped),
+            "cert-embedded CRL URL must be skipped: {:?}",
+            found.iter().map(|e| &e.host).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn skips_url_inside_metadata_string() {
+        // URL preceded by printable data AND not NUL-terminated after (i.e.
+        // embedded mid-string) must not be captured as a patchable entry.
+        let mut buf = vec![0u8; 512];
+        let blob = br#"x="http://www.videolan.org/x264.html" trailer"#;
+        buf[16..16 + blob.len()].copy_from_slice(blob);
+        let img = fake_image(buf);
+        let found = find_urls(&img);
+        assert!(found.is_empty(), "mid-string URL must not be captured");
     }
 }
 
