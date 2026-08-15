@@ -70,7 +70,19 @@ async fn main() {
         .with_state(app_state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 80));
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("Failed to bind to {}: {}", addr, e);
+            tracing::error!(
+                "Port 80 is already in use. Close the other Studio-Offline server instance \
+                 (or whatever is using port 80) and try again."
+            );
+            return;
+        }
+    };
     tracing::info!("listening on {}", addr);
-    axum::serve(listener, app).await.unwrap();
+    if let Err(e) = axum::serve(listener, app).await {
+        tracing::error!("Server error: {}", e);
+    }
 }
