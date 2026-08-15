@@ -83,10 +83,16 @@ fn main() {
     let urls = scan_urls::find_urls(&image);
     println!("Found {} non-localhost URL strings", urls.len());
 
-    let patterns = scan_patterns::scan_patterns(&image);
+    let mut patterns = scan_patterns::scan_patterns(&image);
     for p in &patterns {
         println!("  [{}] {} at 0x{:x}", p.kind, p.name, p.rva);
     }
+
+    let mut trust_checks = scan_trust::find_trust_checks(&image, &patterns);
+    for p in &trust_checks {
+        println!("  [{}] {} at 0x{:x} ({} {})", p.kind, p.name, p.rva, p.patch_offset.unwrap_or(0), p.patch_bytes.as_ref().map(|b| format!("{b:02x?}")).unwrap_or_default());
+    }
+    patterns.append(&mut trust_checks);
 
     let security_cookie = scan_trust::find_security_cookie(&image);
     if let Some(sc) = &security_cookie {
