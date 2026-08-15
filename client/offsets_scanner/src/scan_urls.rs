@@ -26,6 +26,42 @@ fn parse_url(url: &str) -> Option<(String, String)> {
     Some((authority, rest_after))
 }
 
+// Host suffixes that are schema/documentation references, not service
+// endpoints. Rewriting these corrupts XML/XMP namespaces and doc links and
+// provides no offline benefit, so they are skipped.
+const DENYLISTED_HOST_SUFFIXES: &[&str] = &[
+    "w3.org",
+    "ns.adobe.com",
+    "purl.org",
+    "schemas.microsoft.com",
+    "webrtc.org",
+    "ietf.org",
+    "crbug.com",
+    "chromium.org",
+    "github.com",
+    "curl.se",
+    "creativecommons.org",
+    "exif.org",
+    "iptc.org",
+    "xml.org",
+];
+
+fn is_denylisted_host(host: &str) -> bool {
+    let h = host.to_lowercase();
+    DENYLISTED_HOST_SUFFIXES.iter().any(|suffix| {
+        h == *suffix || h.ends_with(&format!(".{suffix}"))
+    })
+}
+
+// Printable ASCII that can appear inside a real URL string. Quotes, angle
+// brackets and whitespace only appear inside XML/XMP/metadata blobs, so a
+// match that hits them is a blob, not a URL string.
+fn is_url_char(b: u8) -> bool {
+    b >= 0x21 && b <= 0x7e && b != b'"' && b != b'\'' && b != b'<' && b != b'>'
+}
+
+const MAX_URL_BYTES: usize = 512;
+
 pub fn localhost_replacement(url: &str) -> Option<(String, bool, String)> {
     // Hand-crafted same-length replacements for known URLs that the generic
     // scheme cannot fit (e.g. short placeholder authorities).
@@ -64,6 +100,15 @@ pub fn scan_ascii_urls(image: &[u8]) -> Vec<(usize, String)> {
         if i + 8 > image.len() {
             break;
         }
+        // Boundary check: the byte before the marker must not be a printable
+        // ASCII char. This prevents matching "http://" inside a larger string
+        // or inside XML/XMP attribute values like xmlns:xmp="http://ns.adobe...".
+        if i > 0 {
+            let prev = image[i - 1];
+            if prev >= 0x21 && prev <= 0x7e {
+                continue;
+            }
+        }
         let mut matched = None;
         for (_, m) in markers.iter().enumerate() {
             if image[i..].starts_with(m) {
@@ -72,17 +117,15 @@ pub fn scan_ascii_urls(image: &[u8]) -> Vec<(usize, String)> {
             }
         }
         let Some(marker_len) = matched else { continue };
-        // Expand to a printable string ending at NUL / whitespace / control / non-ASCII
+        // Expand only while the bytes could belong to a real URL string.
+        // Stop at NUL, whitespace, quotes, angle brackets, control, non-ASCII
+        // (all of which appear inside XML/XMP/metadata blobs, not URLs).
         let mut end = i + marker_len;
-        while end < image.len() {
-            let b = image[end];
-            if b == 0 || b < 0x20 || b >= 0x80 || b == 0x7f {
-                break;
-            }
+        while end < image.len() && is_url_char(image[end]) {
             end += 1;
         }
         let s = String::from_utf8_lossy(&image[i..end]).to_string();
-        if s.chars().count() >= 8 {
+        if s.chars().count() >= 8 && end - i <= MAX_URL_BYTES {
             out.push((i, s));
         }
         // skip past this string to avoid duplicate matches inside it
@@ -116,12 +159,31 @@ pub fn scan_utf16_urls(image: &[u8]) -> Vec<(usize, String)> {
             i += 2;
             continue;
         };
-        // Expand utf16 units until a null unit or non-printable unit
+        // Boundary check: the UTF-16 unit before the marker must not be
+        // printable ASCII (rejects matches inside XML/XMP blobs).
+        if i >= 2 {
+            let prev = u16::from_le_bytes([image[i - 2], image[i - 1]]);
+            if prev >= 0x21 && prev <= 0x7e {
+                i = end_after(i, marker_len);
+                continue;
+            }
+        }
+        // Expand utf16 units until a null unit, non-printable unit, or a
+        // char that only appears inside metadata blobs (whitespace, quotes,
+        // angle brackets).
         let mut end = i + marker_len;
         while end + 1 < image.len() {
             let unit = u16::from_le_bytes([image[end], image[end + 1]]);
             if unit == 0 || (unit < 0x20 && unit != 0x09) || unit == 0x7f {
                 break;
+            }
+            if unit <= 0x7f {
+                let b = unit as u8;
+                if !is_url_char(b) {
+                    break;
+                }
+            } else {
+                break; // non-ASCII unit cannot be part of a URL string
             }
             end += 2;
         }
@@ -132,12 +194,17 @@ pub fn scan_utf16_urls(image: &[u8]) -> Vec<(usize, String)> {
             j += 2;
         }
         let s = String::from_utf16_lossy(&units);
-        if s.chars().count() >= 8 {
+        if s.chars().count() >= 8 && end - i <= MAX_URL_BYTES {
             out.push((i, s));
         }
         i = end;
     }
     out
+}
+
+fn end_after(start: usize, marker_len: usize) -> usize {
+    // Fast-forward past a UTF-16 marker to avoid re-matching inside it.
+    start + marker_len
 }
 
 pub fn find_urls(image: &PeImage) -> Vec<UrlEntry> {
@@ -146,9 +213,23 @@ pub fn find_urls(image: &PeImage) -> Vec<UrlEntry> {
     let mut ascii = scan_ascii_urls(&image.reconstructed);
     ascii.sort_by_key(|(rva, _)| *rva);
     for (rva, url) in ascii {
+        if !is_clean_single_url(&url) {
+            entries.push(UrlEntry {
+                rva,
+                encoding: "ascii".to_string(),
+                length: url.len(),
+                original: url,
+                replacement: String::new(),
+                host: String::new(),
+                skipped: true,
+                reason: Some("not a single clean URL (concatenated blob)".to_string()),
+            });
+            continue;
+        }
         if let Some((replacement, skipped, host)) = localhost_replacement(&url) {
             let byte_len = url.len();
             let fits = replacement.len() <= byte_len;
+            let (skipped, reason) = classify(skipped, &host, fits);
             entries.push(UrlEntry {
                 rva,
                 encoding: "ascii".to_string(),
@@ -157,7 +238,7 @@ pub fn find_urls(image: &PeImage) -> Vec<UrlEntry> {
                 replacement: if fits { replacement } else { "http://localhost".to_string() },
                 host,
                 skipped,
-                reason: if fits { None } else { Some("replacement longer than original; truncated".to_string()) },
+                reason,
             });
         }
     }
@@ -165,10 +246,25 @@ pub fn find_urls(image: &PeImage) -> Vec<UrlEntry> {
     let mut utf16 = scan_utf16_urls(&image.reconstructed);
     utf16.sort_by_key(|(rva, _)| *rva);
     for (rva, url) in utf16 {
+        if !is_clean_single_url(&url) {
+            let byte_len = url.encode_utf16().count() * 2;
+            entries.push(UrlEntry {
+                rva,
+                encoding: "utf16".to_string(),
+                length: byte_len,
+                original: url,
+                replacement: String::new(),
+                host: String::new(),
+                skipped: true,
+                reason: Some("not a single clean URL (concatenated blob)".to_string()),
+            });
+            continue;
+        }
         if let Some((replacement, skipped, host)) = localhost_replacement(&url) {
             let byte_len = url.encode_utf16().count() * 2;
             let repl_bytes = replacement.encode_utf16().count() * 2;
             let fits = repl_bytes <= byte_len;
+            let (skipped, reason) = classify(skipped, &host, fits);
             entries.push(UrlEntry {
                 rva,
                 encoding: "utf16".to_string(),
@@ -177,12 +273,48 @@ pub fn find_urls(image: &PeImage) -> Vec<UrlEntry> {
                 replacement: if fits { replacement } else { "http://localhost".to_string() },
                 host,
                 skipped,
-                reason: if fits { None } else { Some("replacement longer than original; truncated".to_string()) },
+                reason,
             });
         }
     }
 
     entries
+}
+
+fn classify(skipped: bool, host: &str, fits: bool) -> (bool, Option<String>) {
+    if skipped {
+        return (true, Some("placeholder authority; no generic replacement".to_string()));
+    }
+    if is_denylisted_host(host) {
+        return (true, Some(format!("non-service host '{host}' excluded")));
+    }
+    if !fits {
+        return (true, Some("replacement longer than original".to_string()));
+    }
+    (false, None)
+}
+
+// A single real URL string in the binary must not contain a second "://"
+// (which indicates a concatenated blob like "https://luau.orghttps://create...")
+// and its authority must only contain host-legal characters.
+fn is_clean_single_url(url: &str) -> bool {
+    let rest = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+        .unwrap_or("");
+    if rest.contains("://") {
+        return false;
+    }
+    let auth_end = rest
+        .find(|c: char| c == '/' || c == '?' || c == '#')
+        .unwrap_or(rest.len());
+    let authority = &rest[..auth_end];
+    if authority.is_empty() {
+        return false;
+    }
+    authority.chars().all(|c| {
+        c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '%' | '_' | '[' | ']' | '@')
+    })
 }
 
 #[cfg(test)]
@@ -255,6 +387,49 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].encoding, "utf16");
         assert_eq!(found[0].replacement, "http://localhost/foo");
+    }
+
+    #[test]
+    fn skips_xmp_namespace_blob() {
+        // An XMP metadata packet embeds w3.org/ns.adobe.com namespace URLs.
+        // These are not service endpoints; they must not produce a patchable
+        // entry (the old scanner captured the entire blob and corrupted it).
+        let mut buf = vec![0u8; 2048];
+        let blob = br#"<?xpacket begin=""><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">"#;
+        buf[64..64 + blob.len()].copy_from_slice(blob);
+        let img = fake_image(buf);
+        let found = find_urls(&img);
+        assert!(
+            found.iter().all(|e| e.skipped),
+            "XMP namespace URLs must be skipped: {:?}",
+            found.iter().map(|e| (&e.host, &e.skipped)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn skips_concatenated_urls() {
+        // Two URLs joined without a separator in the binary must not be
+        // captured as a single blob.
+        let mut buf = vec![0u8; 512];
+        let blob = b"https://luau.orghttps://create.roblox.com/foo";
+        buf[32..32 + blob.len()].copy_from_slice(blob);
+        let img = fake_image(buf);
+        let found = find_urls(&img);
+        assert!(found.iter().all(|e| e.skipped));
+    }
+
+    #[test]
+    fn url_with_space_is_truncated_not_blob() {
+        // A metadata string containing spaces/quotes after a URL must not
+        // swallow the trailing junk.
+        let mut buf = vec![0u8; 512];
+        let blob = b"https://www.roblox.com/asset \"extra junk <tag>\"";
+        buf[16..16 + blob.len()].copy_from_slice(blob);
+        let img = fake_image(buf);
+        let found = find_urls(&img);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].original, "https://www.roblox.com/asset");
+        assert_eq!(found[0].replacement, "http://localhost/asset");
     }
 }
 
