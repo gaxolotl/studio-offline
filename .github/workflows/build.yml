@@ -1,6 +1,7 @@
 name: build
 
 on:
+  push:
   workflow_dispatch:
 
 jobs:
@@ -15,7 +16,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: studio-offline-build
+          name: studio-offline-build-${{ github.sha }}
           path: |
             target/release/studio_offline.dll
             target/release/webview_who.dll
