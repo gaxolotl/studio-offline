@@ -17,3 +17,11 @@ pub const FETCHER_JNE_THROW: (&[u8], &[u8]) = (
     b"\x80\xBD\xA8\x01\x00\x00\x00\x0F\x85\x66\x02\x00\x00\x49\x8B\xD5\x48\x8D\x4C\x24\x50",
     b"xxxxxxxxxxxxxxxxxxxxx",
 );
+
+// AsyncHttpQueue "Trust check failed" (0x14361c980) before building the
+// `{}: Trust check failed` error. `test al,al` at +17 -> patch to `mov al,1`
+// (b0 01) so the following `jne` always takes the success path.
+pub const ASYNC_TRUST_CHECK: (&[u8], &[u8]) = (
+    b"\x44\x0F\xB6\x4C\x24\x40\x45\x0F\xB6\xC4\x33\xD2\xE8\x00\x00\x00\x00\x84\xC0\x0F\x85\x00\x00\x00\x00\x48\x8D\x05\x00\x00\x00\x00",
+    b"xxxxxxxxxxxxx????xxxx????xxx????",
+);

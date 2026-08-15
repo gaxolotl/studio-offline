@@ -80,6 +80,30 @@ extern "system" fn DllMain(_hmod: HMODULE, reason: u32, _reserved: *mut std::ffi
                 println!("HttpRequest_notTrusted: 0x{httprequest_addr:x}");
             }
 
+            // AsyncHttpQueue trust check: the hooked TrustCheck (above) is a
+            // different function; this one builds `{}: Trust check failed` for
+            // non-whitelisted URLs like http://localhost/... Patch the
+            // `test al,al` at +17 to `mov al,1` so the `jne` success path is
+            // always taken.
+            println!("Patching AsyncHttpQueue trust check...");
+            if let Some(async_trust_addr) = scanner::aob_scan(patterns::ASYNC_TRUST_CHECK) {
+                println!("Found AsyncHttpQueue trust check at 0x{async_trust_addr:x}");
+                let test_addr = async_trust_addr + 17;
+                let mut old_protect = PAGE_PROTECTION_FLAGS(0);
+                let _ = VirtualProtect(
+                    test_addr as *const _,
+                    2,
+                    PAGE_EXECUTE_READWRITE,
+                    &mut old_protect,
+                );
+                *(test_addr as *mut u8) = 0xB0;
+                *(test_addr as *mut u8).add(1) = 0x01;
+                let _ = VirtualProtect(test_addr as *const _, 2, old_protect, &mut old_protect);
+                println!("Patched test al,al -> mov al,1 at 0x{test_addr:x}");
+            } else {
+                println!("Failed to find AsyncHttpQueue trust check pattern");
+            }
+
             // The fetcher (0x14234E590) throws "Error fetching latest place version"
             // at 0x14234EC00 before any HTTP when its 8th stack arg != 0 (caller 2,
             // content types 2/4/10) and no version could be resolved. NOP the
