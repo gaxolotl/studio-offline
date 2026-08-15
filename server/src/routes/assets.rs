@@ -362,6 +362,16 @@ async fn serve_asset_logic(
         )).into_response();
     }
 
+    // Custom avatar part overrides take precedence over the base assets.
+    let avatar_path = PathBuf::from("static/avatar").join(&id);
+    if avatar_path.exists() {
+        let service = ServeFile::new(avatar_path);
+        return match service.oneshot(req).await {
+            Ok(res) => res.into_response(),
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+    }
+
     let file_path = PathBuf::from("static/assets").join(&filename);
 
     if mode == "Asset Grab Mode" {

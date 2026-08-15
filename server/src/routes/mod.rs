@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod avatar;
 pub mod client_settings;
 pub mod datastores;
 pub mod oauth;

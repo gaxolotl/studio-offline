@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Studio-Offline Avatar</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; margin: 0; padding: 24px; }
+  h1 { margin-top: 0; }
+  .part { background: #16213e; border: 1px solid #0f3460; border-radius: 8px; padding: 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .part .name { font-weight: 600; min-width: 180px; }
+  .part .id { color: #8aa0c8; font-family: monospace; font-size: 13px; }
+  .part .status { font-size: 13px; }
+  .ok { color: #4ade80; }
+  .missing { color: #f87171; }
+  .btn { background: #0f3460; color: #eee; border: none; border-radius: 6px; padding: 8px 14px; cursor: pointer; }
+  .btn:hover { background: #1a4a8a; }
+  .btn.danger { background: #7f1d1d; }
+  .btn.danger:hover { background: #991b1b; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  input[type=file] { max-width: 240px; }
+  #status { margin-bottom: 16px; padding: 8px 12px; border-radius: 6px; display: none; }
+  #status.show { display: block; }
+  #status.error { background: #7f1d1d; }
+  #status.success { background: #14532d; }
+  .note { color: #8aa0c8; font-size: 13px; margin-bottom: 16px; }
+  code { background: #0f3460; padding: 1px 6px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h1>Studio-Offline Avatar</h1>
+<div class="note">
+  Upload custom meshes / textures for your avatar parts. Files are saved to
+  <code>static/avatar/&lt;assetId&gt;</code> and take priority over the bundled
+  assets when Studio requests that asset. Reset restores the default part.
+</div>
+<div id="status"></div>
+<div id="parts"></div>
+
+<script>
+async function showStatus(msg, isError) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = 'show ' + (isError ? 'error' : 'success');
+  setTimeout(() => el.classList.remove('show'), 4000);
+}
+
+async function loadParts() {
+  const res = await fetch('/avatar/api/parts');
+  const parts = await res.json();
+  const container = document.getElementById('parts');
+  container.innerHTML = '';
+  for (const p of parts) {
+    const row = document.createElement('div');
+    row.className = 'part';
+
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = p.name;
+
+    const id = document.createElement('div');
+    id.className = 'id';
+    id.textContent = p.id;
+
+    const status = document.createElement('div');
+    status.className = 'status';
+    if (p.size != null) {
+      status.innerHTML = '<span class="ok">custom</span> (' + p.size + ' bytes)';
+    } else {
+      status.innerHTML = '<span class="missing">default / missing</span>';
+    }
+
+    const file = document.createElement('input');
+    file.type = 'file';
+
+    const upload = document.createElement('button');
+    upload.className = 'btn';
+    upload.textContent = 'Upload';
+    upload.onclick = async () => {
+      if (!file.files.length) return;
+      upload.disabled = true;
+      const fd = new FormData();
+      fd.append('file', file.files[0]);
+      try {
+        const r = await fetch('/avatar/api/upload/' + p.id, { method: 'POST', body: fd });
+        if (!r.ok) throw new Error('upload failed');
+        await showStatus('Uploaded ' + p.name);
+      } catch (e) {
+        await showStatus('Failed to upload: ' + e, true);
+      }
+      upload.disabled = false;
+      loadParts();
+    };
+
+    const reset = document.createElement('button');
+    reset.className = 'btn danger';
+    reset.textContent = 'Reset';
+    reset.onclick = async () => {
+      await fetch('/avatar/api/reset/' + p.id, { method: 'POST' });
+      loadParts();
+    };
+
+    row.append(name, id, status, file, upload, reset);
+    container.appendChild(row);
+  }
+}
+
+loadParts();
+</script>
+</body>
+</html>

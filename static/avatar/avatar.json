@@ -1,0 +1,10 @@
+{
+  "parts": [
+    { "id": "123480233606534", "name": "Head Mesh" },
+    { "id": "92465776866386", "name": "Head Texture" },
+    { "id": "111092388570647", "name": "Head Texture (Alpha)" },
+    { "id": "94532826819081", "name": "Torso Texture" },
+    { "id": "97628760291739", "name": "Face Texture" },
+    { "id": "14366558676", "name": "Rig Pose Data" }
+  ]
+}
