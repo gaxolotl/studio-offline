@@ -13,13 +13,14 @@ Failure: `Open Place failure : DataModelLoadingFailure:Error fetching latest pla
   - `gh run download <id> --repo gaxolotl/studio-offline --dir <dest>`
   - Deploy: `studio_offline.dll` + `webview_who.dll` -> `C:\Users\Georgi\Desktop\Roblox-Studio-v734\`
     and `studio_offline_server.exe` -> `C:\Users\Georgi\Desktop\studio-offline-server\`
-- Git remotes: `mine` = https://github.com/gaxolotl/studio-offline.git (push target, GH Actions host)
-  `origin` = https://github.com/Roblox-Devs/studio-offline (upstream, read-only, 403 on push).
+- Git remotes (see AGENTS.md): `origin` = https://github.com/gaxolotl/studio-offline.git
+  (push target, GH Actions host); `upstream` = https://github.com/Roblox-Devs/studio-offline
+  (original project, read-only).
 - This session's branch: **`re-latest-place-version`** (all this analysis is committed here).
 - Server binary listens on **127.0.0.1:80**; Studio is launched with `--offline` from `C:\Users\Georgi\Desktop\Roblox-Studio-v734\`.
 
 ### Working on a NEW PC (important)
-- Clone/fetch this branch: `git fetch mine && git checkout re-latest-place-version`
+- Clone/fetch this branch: `git fetch origin && git checkout re-latest-place-version`
   (or clone https://github.com/gaxolotl/studio-offline.git and checkout the branch).
 - The scripts `notes/disasm.py` and `notes/xrefs.py` need **Python + `capstone`**
   (`pip install capstone`) and the analyzed exe.
